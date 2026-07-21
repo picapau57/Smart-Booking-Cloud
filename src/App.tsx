@@ -10,6 +10,7 @@ import CustomerPortal from './components/CustomerPortal';
 import AdminPanel from './components/AdminPanel';
 import ApiDocs from './components/ApiDocs';
 import AiAssistant from './components/AiAssistant';
+import { localDb } from './lib/localDb';
 
 import {
   LayoutDashboard,
@@ -34,6 +35,7 @@ export default function App() {
   const [currentRole, setRole] = useState<Role>('Manager');
   const [activeCompany, setActiveCompany] = useState<string>('dentist-corp');
   const [activeTab, setActiveTab] = useState<string>('dashboard');
+  const [useLocalFallback, setUseLocalFallback] = useState<boolean>(false);
 
   // Authenticated user simulation info
   const [userEmail, setUserEmail] = useState<string>('manager@dentist.com');
@@ -93,8 +95,43 @@ export default function App() {
     }
   }, [theme]);
 
+  const loadFromLocalDb = () => {
+    // 1. Global SaaS lists
+    const globalDb = localDb.getGlobal();
+    setCompanies(globalDb.companies);
+    setUsersList(globalDb.users);
+
+    // 2. Load coupons
+    const activeCoupons = globalDb.coupons.filter(
+      c => c.companyId === 'global' || c.companyId === activeCompany
+    );
+    setCoupons(activeCoupons);
+
+    // 3. Isolated company data
+    const companyDb = localDb.getCompany(activeCompany);
+    setServices(companyDb.services);
+    setProfessionals(companyDb.professionals);
+    setCustomers(companyDb.customers);
+    setWaitingList(companyDb.waitingList || []);
+    setNotifications(companyDb.notifications || []);
+
+    if (currentRole === 'Customer') {
+      const portal = localDb.getCustomerPortal(activeCompany, userEmail);
+      setAppointments(portal.appointments);
+      setInvoices(portal.invoices);
+    } else {
+      setAppointments(companyDb.appointments);
+      setInvoices(companyDb.invoices);
+    }
+  };
+
   // Load and fetch database records from backend matching active company
   const fetchTenantData = async () => {
+    if (useLocalFallback) {
+      loadFromLocalDb();
+      return;
+    }
+
     try {
       const headers = {
         'x-company-id': activeCompany,
@@ -104,6 +141,10 @@ export default function App() {
 
       // 1. Fetch appointments
       const aptRes = await fetch('/api/appointments', { headers });
+      const contentType = aptRes.headers.get('content-type');
+      if (!aptRes.ok || (contentType && contentType.includes('text/html'))) {
+        throw new Error('Server returned HTML or non-200. Activating local storage mode.');
+      }
       const aptData = await aptRes.json();
       setAppointments(Array.isArray(aptData) ? aptData : []);
 
@@ -161,17 +202,23 @@ export default function App() {
       }
 
     } catch (err) {
-      console.error("Communication error fetching databases details: ", err);
+      console.warn("Communication error fetching databases details. Activating Local Storage Fallback Mode:", err);
+      setUseLocalFallback(true);
     }
   };
 
   useEffect(() => {
     fetchTenantData();
-  }, [activeCompany, currentRole, userEmail]);
+  }, [activeCompany, currentRole, userEmail, useLocalFallback]);
 
   // Operations handlers (linked to backend REST API endpoints)
 
   const handleCreateAppointment = async (aptData: any) => {
+    if (useLocalFallback) {
+      localDb.createAppointment(activeCompany, aptData);
+      fetchTenantData();
+      return;
+    }
     try {
       const res = await fetch('/api/appointments', {
         method: 'POST',
@@ -191,6 +238,11 @@ export default function App() {
   };
 
   const handleUpdateAppointmentStatus = async (id: string, status: 'confirmed' | 'cancelled') => {
+    if (useLocalFallback) {
+      localDb.updateAppointmentStatus(activeCompany, id, status);
+      fetchTenantData();
+      return;
+    }
     try {
       await fetch(`/api/appointments/${id}`, {
         method: 'PUT',
@@ -207,6 +259,11 @@ export default function App() {
   };
 
   const handlePayInvoice = async (id: string, method: string) => {
+    if (useLocalFallback) {
+      localDb.payInvoice(activeCompany, id, method);
+      fetchTenantData();
+      return;
+    }
     try {
       await fetch(`/api/invoices/${id}/pay`, {
         method: 'POST',
@@ -223,6 +280,11 @@ export default function App() {
   };
 
   const handleRegisterCustomer = async (custData: any) => {
+    if (useLocalFallback) {
+      localDb.registerCustomer(activeCompany, custData);
+      fetchTenantData();
+      return;
+    }
     try {
       await fetch('/api/customers', {
         method: 'POST',
@@ -239,6 +301,11 @@ export default function App() {
   };
 
   const handleRegisterProfessional = async (profData: any) => {
+    if (useLocalFallback) {
+      localDb.registerProfessional(activeCompany, profData);
+      fetchTenantData();
+      return;
+    }
     try {
       await fetch('/api/professionals', {
         method: 'POST',
@@ -255,6 +322,11 @@ export default function App() {
   };
 
   const handleCreateService = async (srvData: any) => {
+    if (useLocalFallback) {
+      localDb.createService(activeCompany, srvData);
+      fetchTenantData();
+      return;
+    }
     try {
       await fetch('/api/services', {
         method: 'POST',
@@ -271,6 +343,11 @@ export default function App() {
   };
 
   const handleSyncGoogleCalendar = async (sync: boolean) => {
+    if (useLocalFallback) {
+      localDb.setGoogleCalendarSync(activeCompany, sync);
+      fetchTenantData();
+      return;
+    }
     try {
       await fetch('/api/settings/google-calendar-sync', {
         method: 'POST',
@@ -287,6 +364,11 @@ export default function App() {
   };
 
   const handleUpdateCompany = async (id: string, updates: Partial<Company>) => {
+    if (useLocalFallback) {
+      localDb.updateCompanyAdmin(id, updates);
+      fetchTenantData();
+      return;
+    }
     try {
       await fetch(`/api/admin/companies/${id}`, {
         method: 'PUT',
@@ -303,6 +385,11 @@ export default function App() {
   };
 
   const handleCreateCoupon = async (couponData: any) => {
+    if (useLocalFallback) {
+      localDb.createCoupon(couponData.code, couponData.discountType, couponData.discountValue, activeCompany, currentRole);
+      fetchTenantData();
+      return;
+    }
     try {
       await fetch('/api/coupons', {
         method: 'POST',
@@ -323,6 +410,27 @@ export default function App() {
   const handleRegisterNewCompany = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!authCompanyName || !authEmail || !authPassword) return;
+
+    if (useLocalFallback) {
+      const result = localDb.registerCompany(authCompanyName, authManagerName || 'Business Manager', authEmail, authPlan);
+      if ('error' in result) {
+        alert(result.error);
+        return;
+      }
+      setUserEmail(authEmail);
+      setActiveCompany(result.company.id);
+      setRole('Manager');
+      setIsVerified(false); // Enable Verification flow simulation!
+      setVerificationSent(true);
+      setShowAuthForm(false);
+      // Reset inputs
+      setAuthCompanyName('');
+      setAuthManagerName('');
+      setAuthEmail('');
+      setAuthPassword('');
+      fetchTenantData();
+      return;
+    }
 
     try {
       const res = await fetch('/api/auth/register', {
@@ -360,6 +468,12 @@ export default function App() {
   };
 
   const handleVerifyEmail = async () => {
+    if (useLocalFallback) {
+      localDb.verifyEmail(userEmail);
+      setIsVerified(true);
+      setVerificationSent(false);
+      return;
+    }
     try {
       const res = await fetch('/api/auth/verify-email', {
         method: 'POST',
@@ -418,7 +532,18 @@ export default function App() {
         {/* Dynamic registration switcher card */}
         <div className="flex flex-wrap items-center justify-between gap-4 p-5 bg-white dark:bg-slate-900 rounded-2xl border border-slate-200/60 dark:border-slate-800/80 shadow-sm">
           <div className="space-y-1">
-            <span className="text-[10px] font-bold uppercase tracking-wider text-indigo-600 dark:text-indigo-400">Multi-Company Cloud</span>
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-indigo-600 dark:text-indigo-400">Multi-Company Cloud</span>
+              {useLocalFallback ? (
+                <span className="text-[9px] px-2 py-0.5 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 font-bold rounded-full border border-emerald-500/20 animate-pulse">
+                  ⚡ LocalStorage (Vercel-Safe)
+                </span>
+              ) : (
+                <span className="text-[9px] px-2 py-0.5 bg-blue-500/10 text-blue-600 dark:text-blue-400 font-bold rounded-full border border-blue-500/20">
+                  ☁️ Live Database
+                </span>
+              )}
+            </div>
             <h3 className="text-sm font-extrabold text-slate-800 dark:text-white">
               SaaS Multi-tenant Sandboxing Environment
             </h3>
