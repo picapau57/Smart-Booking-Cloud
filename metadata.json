@@ -1,0 +1,6 @@
+{
+  "name": "Smart Booking Cloud",
+  "description": "Complete premium multi-tenant SaaS booking platform featuring database isolation, Google Calendar sync, interactive dashboards, dynamic billing, automated multi-channel confirmations, and custom Gemini AI insights.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
